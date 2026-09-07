@@ -344,14 +344,10 @@ fun DraggableClip(
     val clipWPx = dispW * scale * densityF
     val handlePx = with(density) { TRIM_HANDLE_DP.dp.roundToPx() }
 
-    val borderColor = if (isSelected) Color(0xFF00BFA5) else Color.Transparent
-    val borderWidth = if (isSelected) 2.dp else 0.dp
-
     Box(
         modifier = Modifier
             .offset { IntOffset((dispXDp * scale * densityF).roundToInt(), dispY.roundToInt()) }
             .size(width = (dispW * scale).dp, height = CLIP_HEIGHT_DP.dp)
-            .border(borderWidth, borderColor, RoundedCornerShape(4.dp))
             .clip(RoundedCornerShape(4.dp))
             .background(clip.color)
             .pointerInput(isSelected) {
