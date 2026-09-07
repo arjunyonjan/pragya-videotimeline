@@ -120,7 +120,7 @@ fun TimelineScreen() {
             .padding(16.dp)
     ) {
         Text(
-            "VideoTimeline — Build 17c (tap-select + trim + 10x zoom)",
+            "VideoTimeline — Build 17d (zoom buttons + pinch)",
             color = Color(0xFF00BFA5),
             fontWeight = FontWeight.Bold,
             fontSize = 18.sp
@@ -233,6 +233,70 @@ fun TimelineBox(modifier: Modifier = Modifier) {
                 )
             }
             Spacer(Modifier.height(4.dp))
+
+            // Split / Delete toolbar
+            val selClip = clips.find { it.label == selectedLabel }
+            if (selClip != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Clip ${selClip.label}", color = Color(0xFF9CA3AF), fontSize = 11.sp)
+                    Spacer(Modifier.width(12.dp))
+
+                    // Split
+                    val canSplit = playheadXDp > selClip.xDp && playheadXDp < selClip.xDp + selClip.widthDp
+                    Text(
+                        "Split",
+                        color = if (canSplit) Color(0xFF00BFA5) else Color(0xFF4B5563),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (canSplit) Color(0xFF1A3A36) else Color(0xFF1F2937))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    if (canSplit) {
+                                        val splitPoint = playheadXDp
+                                        val newLabel = ('A'..'Z').first { c -> clips.none { it.label == "$c" } }.toString()
+                                        val rightWidth = (selClip.xDp + selClip.widthDp) - splitPoint
+                                        val newClip = ClipState(
+                                            label = newLabel,
+                                            color = selClip.color.copy(alpha = 0.8f),
+                                            widthDp = rightWidth,
+                                            xDp = splitPoint,
+                                            row = selClip.row
+                                        )
+                                        selClip.widthDp = splitPoint - selClip.xDp
+                                        clips.add(newClip)
+                                        selectedLabel = null
+                                    }
+                                }
+                            }
+                    )
+                    Spacer(Modifier.width(8.dp))
+
+                    // Delete
+                    Text(
+                        "Delete",
+                        color = Color(0xFFEF4444),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF3B1A1A))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    clips.remove(selClip)
+                                    selectedLabel = null
+                                }
+                            }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+            }
 
             RulerRow(
                 scale = scale,
