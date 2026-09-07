@@ -118,7 +118,7 @@ fun TimelineScreen() {
             .padding(16.dp)
     ) {
         Text(
-            "VideoTimeline — Build 14 (modern draggable)",
+            "VideoTimeline — Build 17c (tap-select + trim + 10x zoom)",
             color = Color(0xFF00BFA5),
             fontWeight = FontWeight.Bold,
             fontSize = 18.sp
