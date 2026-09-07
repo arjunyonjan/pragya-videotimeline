@@ -120,7 +120,7 @@ fun TimelineScreen() {
             .padding(16.dp)
     ) {
         Text(
-            "VideoTimeline — Build 17d (zoom buttons + pinch)",
+            "VideoTimeline — Build 18 (split + delete)",
             color = Color(0xFF00BFA5),
             fontWeight = FontWeight.Bold,
             fontSize = 18.sp
