@@ -10,6 +10,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -171,9 +173,69 @@ fun TimelineBox(modifier: Modifier = Modifier) {
             .background(Color(0xFF1A1F26))
     ) {
         Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+            // Zoom buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Zoom:", color = Color(0xFF6B7280), fontSize = 12.sp)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "-",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF374151))
+                        .padding(4.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures { scale = (scale * 0.8f).coerceIn(0.5f, 10f) }
+                        },
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${String.format("%.1f", scale)}x",
+                    color = Color(0xFF00BFA5),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "+",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF374151))
+                        .padding(4.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures { scale = (scale * 1.25f).coerceIn(0.5f, 10f) }
+                        },
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Reset",
+                    color = Color(0xFFEF4444),
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF374151))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures { scale = 1f }
+                        }
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+
             RulerRow(
                 scale = scale,
-                onScale = { scale = it },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(24.dp)
@@ -181,11 +243,16 @@ fun TimelineBox(modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(8.dp))
 
+            val transformState = rememberTransformableState { zoomChange, _, _ ->
+                scale = (scale * zoomChange).coerceIn(0.5f, 10f)
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(240.dp)
                     .horizontalScroll(scrollState, enabled = !dragActive)
+                    .transformable(state = transformState)
             ) {
                 TrackLanes(
                     scale = scale,
@@ -281,7 +348,6 @@ fun TrackLanes(
 @Composable
 fun RulerRow(
     scale: Float,
-    onScale: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val count = ((TIMELINE_WIDTH_DP * scale) / DP_PER_SECOND).toInt() + 1
@@ -290,11 +356,6 @@ fun RulerRow(
         modifier = modifier
             .width((TIMELINE_WIDTH_DP * scale).dp)
             .background(Color(0xFF252B34))
-            .pointerInput(Unit) {
-                detectTransformGestures { _, _, zoom, _ ->
-                    if (zoom != 1f) onScale((scale * zoom).coerceIn(0.5f, 10f))
-                }
-            }
     ) {
         repeat(count) { i ->
             Text(
