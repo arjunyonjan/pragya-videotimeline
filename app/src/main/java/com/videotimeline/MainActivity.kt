@@ -4,7 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -149,6 +151,7 @@ fun TimelineBox(modifier: Modifier = Modifier) {
 
     var scale by rememberSaveable { mutableFloatStateOf(1f) }
     var dragActive by remember { mutableStateOf(false) }
+    var selectedLabel by remember { mutableStateOf<String?>(null) }
     val maxXDp = TIMELINE_WIDTH_DP * scale
 
     val clips = rememberSaveable(saver = ClipsSaver) {
@@ -191,15 +194,26 @@ fun TimelineBox(modifier: Modifier = Modifier) {
                     rulerHeightPx = rulerHeightPx
                 )
 
+                // Background tap to deselect
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(240.dp)
+                        .pointerInput(Unit) { detectTapGestures { selectedLabel = null } }
+                )
+
                 clips.forEach { clip ->
                     DraggableClip(
                         clip = clip,
+                        isSelected = clip.label == selectedLabel,
                         scale = scale,
                         trackHeightPx = trackHeightPx,
                         rowTotalPx = rowTotalPx,
                         rulerHeightPx = rulerHeightPx,
                         maxXDp = maxXDp,
                         onActiveChange = { dragActive = it },
+                        onSelect = { selectedLabel = clip.label },
+                        onDeselect = { selectedLabel = null },
                         onCommit = { newXDp, newWidth, newRow ->
                             clip.xDp = newXDp
                             clip.widthDp = newWidth
@@ -296,18 +310,21 @@ fun RulerRow(
     }
 }
 
-private const val TRIM_HANDLE_DP = 12
+private const val TRIM_HANDLE_DP = 20
 private const val MIN_CLIP_WIDTH_DP = 30
 
 @Composable
 fun DraggableClip(
     clip: ClipState,
+    isSelected: Boolean,
     scale: Float,
     trackHeightPx: Int,
     rowTotalPx: Int,
     rulerHeightPx: Int,
     maxXDp: Float,
     onActiveChange: (Boolean) -> Unit,
+    onSelect: () -> Unit,
+    onDeselect: () -> Unit,
     onCommit: (Float, Float, Int) -> Unit
 ) {
     val density = LocalDensity.current
@@ -317,7 +334,7 @@ fun DraggableClip(
     var localRow by remember { mutableIntStateOf(clip.row) }
     var localWidth by remember { mutableFloatStateOf(clip.widthDp.toFloat()) }
     var dragging by remember { mutableStateOf(false) }
-    var dragMode by remember { mutableStateOf(0) } // 0=move, -1=trimLeft, 1=trimRight
+    var dragMode by remember { mutableIntStateOf(0) } // 0=move, -1=trimLeft, 1=trimRight
 
     val dispXDp = if (dragging) localXDp else clip.xDp
     val dispRow = if (dragging) localRow else clip.row
@@ -327,59 +344,67 @@ fun DraggableClip(
     val clipWPx = dispW * scale * densityF
     val handlePx = with(density) { TRIM_HANDLE_DP.dp.roundToPx() }
 
+    val borderColor = if (isSelected) Color(0xFF00BFA5) else Color.Transparent
+    val borderWidth = if (isSelected) 2.dp else 0.dp
+
     Box(
         modifier = Modifier
             .offset { IntOffset((dispXDp * scale * densityF).roundToInt(), dispY.roundToInt()) }
             .size(width = (dispW * scale).dp, height = CLIP_HEIGHT_DP.dp)
+            .border(borderWidth, borderColor, RoundedCornerShape(4.dp))
             .clip(RoundedCornerShape(4.dp))
             .background(clip.color)
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { offset ->
-                        localXDp = clip.xDp
-                        localRow = clip.row
-                        localWidth = clip.widthDp.toFloat()
-                        dragMode = when {
-                            offset.x < handlePx -> -1
-                            offset.x > clipWPx - handlePx -> 1
-                            else -> 0
+            .pointerInput(isSelected) {
+                if (isSelected) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            localXDp = clip.xDp
+                            localRow = clip.row
+                            localWidth = clip.widthDp.toFloat()
+                            dragMode = when {
+                                offset.x < handlePx -> -1
+                                offset.x > clipWPx - handlePx -> 1
+                                else -> 0
+                            }
+                            dragging = true
+                            onActiveChange(true)
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            onActiveChange(false)
+                            onCommit(
+                                (localXDp / SNAP_DP).roundToInt() * SNAP_DP,
+                                (localWidth / SNAP_DP).roundToInt() * SNAP_DP,
+                                localRow
+                            )
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            onActiveChange(false)
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val dxDp = dragAmount.x / densityF / scale
+                            when (dragMode) {
+                                -1 -> {
+                                    val newW = (localWidth - dxDp).coerceAtLeast(minW)
+                                    localXDp = (localXDp + localWidth - newW).coerceIn(0f, maxXDp)
+                                    localWidth = newW
+                                }
+                                1 -> {
+                                    localWidth = (localWidth + dxDp).coerceAtLeast(minW)
+                                }
+                                else -> {
+                                    localXDp = (localXDp + dxDp).coerceIn(0f, maxXDp - localWidth)
+                                    localRow = (localRow + (dragAmount.y / rowTotalPx).roundToInt())
+                                        .coerceIn(MIN_ROW, MAX_ROW)
+                                }
+                            }
                         }
-                        dragging = true
-                        onActiveChange(true)
-                    },
-                    onDragEnd = {
-                        dragging = false
-                        onActiveChange(false)
-                        onCommit(
-                            (localXDp / SNAP_DP).roundToInt() * SNAP_DP,
-                            (localWidth / SNAP_DP).roundToInt() * SNAP_DP,
-                            localRow
-                        )
-                    },
-                    onDragCancel = {
-                        dragging = false
-                        onActiveChange(false)
-                    },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        val dxDp = dragAmount.x / densityF / scale
-                        when (dragMode) {
-                            -1 -> { // trim left
-                                val newW = (localWidth - dxDp).coerceAtLeast(minW)
-                                localXDp = (localXDp + localWidth - newW).coerceIn(0f, maxXDp)
-                                localWidth = newW
-                            }
-                            1 -> { // trim right
-                                localWidth = (localWidth + dxDp).coerceAtLeast(minW)
-                            }
-                            else -> { // move
-                                localXDp = (localXDp + dxDp).coerceIn(0f, maxXDp - localWidth)
-                                localRow = (localRow + (dragAmount.y / rowTotalPx).roundToInt())
-                                    .coerceIn(MIN_ROW, MAX_ROW)
-                            }
-                        }
-                    }
-                )
+                    )
+                } else {
+                    detectTapGestures { onSelect() }
+                }
             },
         contentAlignment = Alignment.Center
     ) {
@@ -389,9 +414,10 @@ fun DraggableClip(
             fontWeight = FontWeight.Bold,
             fontSize = 12.sp
         )
-        // Trim handles
-        Box(Modifier.align(Alignment.CenterStart).width(3.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.4f)))
-        Box(Modifier.align(Alignment.CenterEnd).width(3.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.4f)))
+        if (isSelected) {
+            Box(Modifier.align(Alignment.CenterStart).width(4.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.6f)))
+            Box(Modifier.align(Alignment.CenterEnd).width(4.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.6f)))
+        }
     }
 }
 
