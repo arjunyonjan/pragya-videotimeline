@@ -1,0 +1,418 @@
+package com.videotimeline
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF0F1419)) {
+                    TimelineScreen()
+                }
+            }
+        }
+    }
+}
+
+private const val DP_PER_SECOND = 50f
+private const val SNAP_DP = 50f
+private const val ROW_HEIGHT_DP = 80
+private const val ROW_GAP_DP = 4
+private const val CLIP_HEIGHT_DP = 48
+private const val MIN_ROW = 0
+private const val MAX_ROW = 1
+private const val TIMELINE_WIDTH_DP = 600
+
+private fun dpToTimecode(dp: Float): String {
+    val totalSeconds = dp / DP_PER_SECOND
+    val minutes = (totalSeconds / 60).toInt()
+    val seconds = totalSeconds.toInt() % 60
+    val centi = ((totalSeconds - totalSeconds.toInt()) * 100).toInt()
+    return "%02d:%02d.%02d".format(minutes, seconds, centi)
+}
+
+class ClipState(
+    val label: String,
+    val color: Color,
+    val widthDp: Int,
+    xDp: Float,
+    row: Int
+) {
+    var xDp by mutableFloatStateOf(xDp)
+    var row by mutableIntStateOf(row)
+}
+
+private val ClipsSaver: Saver<MutableList<ClipState>, Any> = listSaver(
+    save = { list -> list.map { listOf(it.label, it.color.toArgb(), it.widthDp, it.xDp, it.row) } },
+    restore = { saved ->
+        saved.map {
+            @Suppress("UNCHECKED_CAST")
+            val l = it as List<Any>
+            ClipState(
+                label = l[0] as String,
+                color = Color(l[1] as Int),
+                widthDp = (l[2] as Number).toInt(),
+                xDp = (l[3] as Number).toFloat(),
+                row = (l[4] as Number).toInt()
+            )
+        }.toMutableList()
+    }
+)
+
+@Composable
+fun TimelineScreen() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            "VideoTimeline — Build 14 (modern draggable)",
+            color = Color(0xFF00BFA5),
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Drag clips. Drag playhead. Pinch ruler to zoom. Scroll horizontally.",
+            color = Color(0xFF6B7280),
+            fontSize = 12.sp
+        )
+        Spacer(Modifier.height(16.dp))
+
+        TimelineBox(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(320.dp)
+        )
+    }
+}
+
+@Composable
+fun TimelineBox(modifier: Modifier = Modifier) {
+    val density = LocalDensity.current
+    val trackHeightPx = with(density) { ROW_HEIGHT_DP.dp.roundToPx() }
+    val trackGapPx = with(density) { ROW_GAP_DP.dp.roundToPx() }
+    val rowTotalPx = trackHeightPx + trackGapPx
+    val rulerHeightPx = with(density) { 32.dp.roundToPx() }
+    val clipHeightPx = with(density) { CLIP_HEIGHT_DP.dp.roundToPx() }
+    val scrollState = rememberScrollState()
+
+    var scale by rememberSaveable { mutableFloatStateOf(1f) }
+    var dragActive by remember { mutableStateOf(false) }
+    val maxXDp = TIMELINE_WIDTH_DP * scale
+
+    val clips = rememberSaveable(saver = ClipsSaver) {
+        mutableListOf(
+            ClipState("A", Color(0xFF7C3AED), 100, 12f, 0),
+            ClipState("B", Color(0xFFEC4899), 120, 152f, 0),
+            ClipState("C", Color(0xFF10B981), 90, 24f, 1),
+            ClipState("D", Color(0xFFF59E0B), 110, 200f, 1)
+        )
+    }
+
+    var playheadXDp by rememberSaveable { mutableFloatStateOf(60f) }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF1A1F26))
+    ) {
+        Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+            RulerRow(
+                scale = scale,
+                onScale = { scale = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(24.dp)
+                    .horizontalScroll(scrollState, enabled = !dragActive)
+            )
+            Spacer(Modifier.height(8.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(240.dp)
+                    .horizontalScroll(scrollState, enabled = !dragActive)
+            ) {
+                TrackLanes(
+                    scale = scale,
+                    trackHeightPx = trackHeightPx,
+                    rowTotalPx = rowTotalPx,
+                    rulerHeightPx = rulerHeightPx
+                )
+
+                clips.forEach { clip ->
+                    DraggableClip(
+                        clip = clip,
+                        scale = scale,
+                        trackHeightPx = trackHeightPx,
+                        rowTotalPx = rowTotalPx,
+                        rulerHeightPx = rulerHeightPx,
+                        maxXDp = maxXDp,
+                        onActiveChange = { dragActive = it },
+                        onCommit = { newXDp, newRow ->
+                            clip.xDp = newXDp
+                            clip.row = newRow
+                            repeat(3) { pushNeighbors(clip, clips, maxXDp) }
+                        }
+                    )
+                }
+
+                Playhead(
+                    xDp = playheadXDp,
+                    scale = scale,
+                    heightPx = with(density) { 240.dp.roundToPx() },
+                    maxXDp = maxXDp,
+                    onActiveChange = { dragActive = it },
+                    onCommit = { newXDp -> playheadXDp = newXDp }
+                )
+            }
+        }
+    }
+}
+
+private fun pushNeighbors(
+    moving: ClipState,
+    clips: MutableList<ClipState>,
+    maxXDp: Float
+) {
+    val movingStart = moving.xDp
+    val movingEnd = moving.xDp + moving.widthDp
+
+    clips.filter { it.label != moving.label && it.row == moving.row }.forEach { other ->
+        val otherStart = other.xDp
+        val otherEnd = other.xDp + other.widthDp
+        val overlap = movingStart < otherEnd && movingEnd > otherStart
+        if (overlap) {
+            other.xDp = when {
+                movingStart < otherStart -> movingEnd.coerceAtMost(maxXDp - other.widthDp)
+                else -> (movingStart - other.widthDp).coerceAtLeast(0f)
+            }
+            other.xDp = (other.xDp / SNAP_DP).roundToInt() * SNAP_DP
+        }
+    }
+}
+
+@Composable
+fun TrackLanes(
+    scale: Float,
+    trackHeightPx: Int,
+    rowTotalPx: Int,
+    rulerHeightPx: Int
+) {
+    val laneWidthDp = (TIMELINE_WIDTH_DP * scale).dp
+    repeat(MAX_ROW + 1) { row ->
+        val yPx = rulerHeightPx + row * rowTotalPx
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, yPx) }
+                .size(width = laneWidthDp, height = ROW_HEIGHT_DP.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color(0xFF252B34))
+        )
+    }
+}
+
+@Composable
+fun RulerRow(
+    scale: Float,
+    onScale: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val count = ((TIMELINE_WIDTH_DP * scale) / DP_PER_SECOND).toInt() + 1
+    val markWidthDp = (DP_PER_SECOND * scale).dp
+    Row(
+        modifier = modifier
+            .width((TIMELINE_WIDTH_DP * scale).dp)
+            .background(Color(0xFF252B34))
+            .pointerInput(Unit) {
+                detectTransformGestures { _, _, zoom, _ ->
+                    if (zoom != 1f) onScale((scale * zoom).coerceIn(0.5f, 3f))
+                }
+            }
+    ) {
+        repeat(count) { i ->
+            Text(
+                "${i}s",
+                color = Color(0xFF6B7280),
+                fontSize = 10.sp,
+                modifier = Modifier
+                    .width(markWidthDp)
+                    .height(24.dp)
+                    .padding(start = 2.dp, top = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun DraggableClip(
+    clip: ClipState,
+    scale: Float,
+    trackHeightPx: Int,
+    rowTotalPx: Int,
+    rulerHeightPx: Int,
+    maxXDp: Float,
+    onActiveChange: (Boolean) -> Unit,
+    onCommit: (Float, Int) -> Unit
+) {
+    val maxXBound = (maxXDp - clip.widthDp).coerceAtLeast(0f)
+    val density = LocalDensity.current
+    val densityF = density.density
+    var localXDp by remember { mutableFloatStateOf(clip.xDp) }
+    var localRow by remember { mutableIntStateOf(clip.row) }
+    var dragging by remember { mutableStateOf(false) }
+
+    val dispXDp = if (dragging) localXDp else clip.xDp
+    val dispRow = if (dragging) localRow else clip.row
+    val clipH = with(density) { CLIP_HEIGHT_DP.dp.roundToPx() }
+    val dispY = rulerHeightPx + (dispRow * rowTotalPx) + (trackHeightPx - clipH) / 2f
+
+    val dragState = rememberDraggableState { delta ->
+        localXDp = (localXDp + delta / densityF / scale).coerceIn(0f, maxXBound)
+    }
+
+    Box(
+        modifier = Modifier
+            .offset { IntOffset((dispXDp * scale * densityF).roundToInt(), dispY.roundToInt()) }
+            .size(width = (clip.widthDp * scale).dp, height = CLIP_HEIGHT_DP.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(clip.color)
+            .draggable(
+                state = dragState,
+                orientation = androidx.compose.foundation.gestures.Orientation.Horizontal,
+                onDragStarted = {
+                    localXDp = clip.xDp
+                    localRow = clip.row
+                    dragging = true
+                    onActiveChange(true)
+                },
+                onDragStopped = {
+                    dragging = false
+                    onActiveChange(false)
+                    onCommit((localXDp / SNAP_DP).roundToInt() * SNAP_DP, localRow)
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "Clip ${clip.label}",
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp
+        )
+    }
+}
+
+@Composable
+fun Playhead(
+    xDp: Float,
+    scale: Float,
+    heightPx: Int,
+    maxXDp: Float,
+    onActiveChange: (Boolean) -> Unit,
+    onCommit: (Float) -> Unit
+) {
+    var localXDp by remember { mutableFloatStateOf(xDp) }
+    var dragging by remember { mutableStateOf(false) }
+    val dispXDp = if (dragging) localXDp else xDp
+    val density = LocalDensity.current
+    val densityF = density.density
+
+    val dragState = rememberDraggableState { delta ->
+        localXDp = (localXDp + delta / densityF / scale).coerceIn(0f, maxXDp)
+    }
+
+    val touchWidthPx = with(density) { 24.dp.roundToPx().toFloat() }
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(((dispXDp * scale * densityF) - (touchWidthPx / 2f)).roundToInt(), 0) }
+            .size(width = 24.dp, height = with(density) { heightPx.toDp() })
+            .draggable(
+                state = dragState,
+                orientation = androidx.compose.foundation.gestures.Orientation.Horizontal,
+                onDragStarted = {
+                    localXDp = xDp
+                    dragging = true
+                    onActiveChange(true)
+                },
+                onDragStopped = {
+                    dragging = false
+                    onActiveChange(false)
+                    onCommit((localXDp / SNAP_DP).roundToInt() * SNAP_DP)
+                }
+            ),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(width = 70.dp, height = 18.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFFEF4444)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    dpToTimecode(if (dragging) localXDp else xDp),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .fillMaxHeight()
+                    .background(Color(0xFFEF4444))
+            )
+        }
+    }
+}
