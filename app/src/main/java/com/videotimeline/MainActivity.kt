@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -316,31 +317,37 @@ fun DraggableClip(
     val clipH = with(density) { CLIP_HEIGHT_DP.dp.roundToPx() }
     val dispY = rulerHeightPx + (dispRow * rowTotalPx) + (trackHeightPx - clipH) / 2f
 
-    val dragState = rememberDraggableState { delta ->
-        localXDp = (localXDp + delta / densityF / scale).coerceIn(0f, maxXBound)
-    }
-
     Box(
         modifier = Modifier
             .offset { IntOffset((dispXDp * scale * densityF).roundToInt(), dispY.roundToInt()) }
             .size(width = (clip.widthDp * scale).dp, height = CLIP_HEIGHT_DP.dp)
             .clip(RoundedCornerShape(4.dp))
             .background(clip.color)
-            .draggable(
-                state = dragState,
-                orientation = androidx.compose.foundation.gestures.Orientation.Horizontal,
-                onDragStarted = {
-                    localXDp = clip.xDp
-                    localRow = clip.row
-                    dragging = true
-                    onActiveChange(true)
-                },
-                onDragStopped = {
-                    dragging = false
-                    onActiveChange(false)
-                    onCommit((localXDp / SNAP_DP).roundToInt() * SNAP_DP, localRow)
-                }
-            ),
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = {
+                        localXDp = clip.xDp
+                        localRow = clip.row
+                        dragging = true
+                        onActiveChange(true)
+                    },
+                    onDragEnd = {
+                        dragging = false
+                        onActiveChange(false)
+                        onCommit((localXDp / SNAP_DP).roundToInt() * SNAP_DP, localRow)
+                    },
+                    onDragCancel = {
+                        dragging = false
+                        onActiveChange(false)
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        localXDp = (localXDp + dragAmount.x / densityF / scale).coerceIn(0f, maxXBound)
+                        localRow = (localRow + (dragAmount.y / rowTotalPx).roundToInt())
+                            .coerceIn(MIN_ROW, MAX_ROW)
+                    }
+                )
+            },
         contentAlignment = Alignment.Center
     ) {
         Text(
