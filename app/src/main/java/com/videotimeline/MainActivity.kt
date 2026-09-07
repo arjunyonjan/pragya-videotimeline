@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private const val DP_PER_SECOND = 50f
-private const val SNAP_DP = 50f
+private const val PROXIMITY_SNAP_DP = 15f
 private const val ROW_HEIGHT_DP = 80
 private const val ROW_GAP_DP = 4
 private const val CLIP_HEIGHT_DP = 48
@@ -120,7 +120,7 @@ fun TimelineScreen() {
             .padding(16.dp)
     ) {
         Text(
-            "VideoTimeline — Build 18 (split + delete)",
+            "VideoTimeline — Build 19 (proximity snap)",
             color = Color(0xFF00BFA5),
             fontWeight = FontWeight.Bold,
             fontSize = 18.sp
@@ -346,7 +346,8 @@ fun TimelineBox(modifier: Modifier = Modifier) {
                         onSelect = { selectedLabel = clip.label },
                         onDeselect = { selectedLabel = null },
                         onCommit = { newXDp, newWidth, newRow ->
-                            clip.xDp = newXDp
+                            val snappedX = proximitySnap(newXDp, newWidth, newRow, clips, clip.label)
+                            clip.xDp = snappedX
                             clip.widthDp = newWidth
                             clip.row = newRow
                             repeat(3) { pushNeighbors(clip, clips, maxXDp) }
@@ -384,9 +385,27 @@ private fun pushNeighbors(
                 movingStart < otherStart -> movingEnd.coerceAtMost(maxXDp - other.widthDp)
                 else -> (movingStart - other.widthDp).coerceAtLeast(0f)
             }
-            other.xDp = (other.xDp / SNAP_DP).roundToInt() * SNAP_DP
         }
     }
+}
+
+fun proximitySnap(xDp: Float, widthDp: Float, row: Int, clips: List<ClipState>, selfLabel: String): Float {
+    var snapped = xDp
+    val myEnd = xDp + widthDp
+    val threshold = PROXIMITY_SNAP_DP
+
+    clips.filter { it.label != selfLabel && it.row == row }.forEach { other ->
+        val otherEnd = other.xDp + other.widthDp
+        // Snap my start to other's end
+        if (kotlin.math.abs(xDp - otherEnd) < threshold) snapped = otherEnd
+        // Snap my end to other's start
+        if (kotlin.math.abs(myEnd - other.xDp) < threshold) snapped = other.xDp - widthDp
+        // Snap my start to other's start
+        if (kotlin.math.abs(xDp - other.xDp) < threshold) snapped = other.xDp
+        // Snap my end to other's end
+        if (kotlin.math.abs(myEnd - otherEnd) < threshold) snapped = otherEnd - widthDp
+    }
+    return snapped.coerceAtLeast(0f)
 }
 
 @Composable
@@ -493,11 +512,7 @@ fun DraggableClip(
                         onDragEnd = {
                             dragging = false
                             onActiveChange(false)
-                            onCommit(
-                                (localXDp / SNAP_DP).roundToInt() * SNAP_DP,
-                                (localWidth / SNAP_DP).roundToInt() * SNAP_DP,
-                                localRow
-                            )
+                            onCommit(localXDp, localWidth, localRow)
                         },
                         onDragCancel = {
                             dragging = false
@@ -577,7 +592,7 @@ fun Playhead(
                 onDragStopped = {
                     dragging = false
                     onActiveChange(false)
-                    onCommit((localXDp / SNAP_DP).roundToInt() * SNAP_DP)
+                    onCommit(localXDp)
                 }
             ),
         contentAlignment = Alignment.TopCenter
