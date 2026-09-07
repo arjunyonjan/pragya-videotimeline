@@ -82,10 +82,11 @@ private fun dpToTimecode(dp: Float): String {
 class ClipState(
     val label: String,
     val color: Color,
-    val widthDp: Int,
+    widthDp: Float,
     xDp: Float,
     row: Int
 ) {
+    var widthDp by mutableFloatStateOf(widthDp)
     var xDp by mutableFloatStateOf(xDp)
     var row by mutableIntStateOf(row)
 }
@@ -99,7 +100,7 @@ private val ClipsSaver: Saver<MutableList<ClipState>, Any> = listSaver(
             ClipState(
                 label = l[0] as String,
                 color = Color(l[1] as Int),
-                widthDp = (l[2] as Number).toInt(),
+                widthDp = (l[2] as Number).toFloat(),
                 xDp = (l[3] as Number).toFloat(),
                 row = (l[4] as Number).toInt()
             )
@@ -152,10 +153,10 @@ fun TimelineBox(modifier: Modifier = Modifier) {
 
     val clips = rememberSaveable(saver = ClipsSaver) {
         mutableListOf(
-            ClipState("A", Color(0xFF7C3AED), 100, 12f, 0),
-            ClipState("B", Color(0xFFEC4899), 120, 152f, 0),
-            ClipState("C", Color(0xFF10B981), 90, 24f, 1),
-            ClipState("D", Color(0xFFF59E0B), 110, 200f, 1)
+            ClipState("A", Color(0xFF7C3AED), 100f, 12f, 0),
+            ClipState("B", Color(0xFFEC4899), 120f, 152f, 0),
+            ClipState("C", Color(0xFF10B981), 90f, 24f, 1),
+            ClipState("D", Color(0xFFF59E0B), 110f, 200f, 1)
         )
     }
 
@@ -199,8 +200,9 @@ fun TimelineBox(modifier: Modifier = Modifier) {
                         rulerHeightPx = rulerHeightPx,
                         maxXDp = maxXDp,
                         onActiveChange = { dragActive = it },
-                        onCommit = { newXDp, newRow ->
+                        onCommit = { newXDp, newWidth, newRow ->
                             clip.xDp = newXDp
+                            clip.widthDp = newWidth
                             clip.row = newRow
                             repeat(3) { pushNeighbors(clip, clips, maxXDp) }
                         }
@@ -294,6 +296,9 @@ fun RulerRow(
     }
 }
 
+private const val TRIM_HANDLE_DP = 12
+private const val MIN_CLIP_WIDTH_DP = 30
+
 @Composable
 fun DraggableClip(
     clip: ClipState,
@@ -303,38 +308,53 @@ fun DraggableClip(
     rulerHeightPx: Int,
     maxXDp: Float,
     onActiveChange: (Boolean) -> Unit,
-    onCommit: (Float, Int) -> Unit
+    onCommit: (Float, Float, Int) -> Unit
 ) {
-    val maxXBound = (maxXDp - clip.widthDp).coerceAtLeast(0f)
     val density = LocalDensity.current
     val densityF = density.density
+    val minW = MIN_CLIP_WIDTH_DP.toFloat()
     var localXDp by remember { mutableFloatStateOf(clip.xDp) }
     var localRow by remember { mutableIntStateOf(clip.row) }
+    var localWidth by remember { mutableFloatStateOf(clip.widthDp.toFloat()) }
     var dragging by remember { mutableStateOf(false) }
+    var dragMode by remember { mutableStateOf(0) } // 0=move, -1=trimLeft, 1=trimRight
 
     val dispXDp = if (dragging) localXDp else clip.xDp
     val dispRow = if (dragging) localRow else clip.row
+    val dispW = if (dragging) localWidth else clip.widthDp.toFloat()
     val clipH = with(density) { CLIP_HEIGHT_DP.dp.roundToPx() }
     val dispY = rulerHeightPx + (dispRow * rowTotalPx) + (trackHeightPx - clipH) / 2f
+    val clipWPx = dispW * scale * densityF
+    val handlePx = with(density) { TRIM_HANDLE_DP.dp.roundToPx() }
 
     Box(
         modifier = Modifier
             .offset { IntOffset((dispXDp * scale * densityF).roundToInt(), dispY.roundToInt()) }
-            .size(width = (clip.widthDp * scale).dp, height = CLIP_HEIGHT_DP.dp)
+            .size(width = (dispW * scale).dp, height = CLIP_HEIGHT_DP.dp)
             .clip(RoundedCornerShape(4.dp))
             .background(clip.color)
             .pointerInput(Unit) {
                 detectDragGestures(
-                    onDragStart = {
+                    onDragStart = { offset ->
                         localXDp = clip.xDp
                         localRow = clip.row
+                        localWidth = clip.widthDp.toFloat()
+                        dragMode = when {
+                            offset.x < handlePx -> -1
+                            offset.x > clipWPx - handlePx -> 1
+                            else -> 0
+                        }
                         dragging = true
                         onActiveChange(true)
                     },
                     onDragEnd = {
                         dragging = false
                         onActiveChange(false)
-                        onCommit((localXDp / SNAP_DP).roundToInt() * SNAP_DP, localRow)
+                        onCommit(
+                            (localXDp / SNAP_DP).roundToInt() * SNAP_DP,
+                            (localWidth / SNAP_DP).roundToInt() * SNAP_DP,
+                            localRow
+                        )
                     },
                     onDragCancel = {
                         dragging = false
@@ -342,9 +362,22 @@ fun DraggableClip(
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
-                        localXDp = (localXDp + dragAmount.x / densityF / scale).coerceIn(0f, maxXBound)
-                        localRow = (localRow + (dragAmount.y / rowTotalPx).roundToInt())
-                            .coerceIn(MIN_ROW, MAX_ROW)
+                        val dxDp = dragAmount.x / densityF / scale
+                        when (dragMode) {
+                            -1 -> { // trim left
+                                val newW = (localWidth - dxDp).coerceAtLeast(minW)
+                                localXDp = (localXDp + localWidth - newW).coerceIn(0f, maxXDp)
+                                localWidth = newW
+                            }
+                            1 -> { // trim right
+                                localWidth = (localWidth + dxDp).coerceAtLeast(minW)
+                            }
+                            else -> { // move
+                                localXDp = (localXDp + dxDp).coerceIn(0f, maxXDp - localWidth)
+                                localRow = (localRow + (dragAmount.y / rowTotalPx).roundToInt())
+                                    .coerceIn(MIN_ROW, MAX_ROW)
+                            }
+                        }
                     }
                 )
             },
@@ -356,6 +389,9 @@ fun DraggableClip(
             fontWeight = FontWeight.Bold,
             fontSize = 12.sp
         )
+        // Trim handles
+        Box(Modifier.align(Alignment.CenterStart).width(3.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.4f)))
+        Box(Modifier.align(Alignment.CenterEnd).width(3.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.4f)))
     }
 }
 
