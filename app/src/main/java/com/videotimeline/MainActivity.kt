@@ -292,7 +292,7 @@ fun RulerRow(
             .background(Color(0xFF252B34))
             .pointerInput(Unit) {
                 detectTransformGestures { _, _, zoom, _ ->
-                    if (zoom != 1f) onScale((scale * zoom).coerceIn(0.5f, 3f))
+                    if (zoom != 1f) onScale((scale * zoom).coerceIn(0.5f, 10f))
                 }
             }
     ) {
